@@ -1,0 +1,162 @@
+\ Gui wrapper example, using CreatePipe in windows - SwiftForth 
+\ Author: https://www.youtube.com/@code4th
+
+
+FUNCTION: CreatePipe            ( hReadPipe hWritePipe lpPipeAttributes nSize -- bool )
+FUNCTION: SetHandleInformation  ( hObject dwMask dwFlags -- bool )
+FUNCTION: PeekNamedPipe         ( hNamedPipe lpBuffer nBufferSize lpBytesRead lpTotalBytesAvail lpBytesLeftThisMessage -- bool )
+FUNCTION: ReadFile              ( hFile lpBuffer nBytesToRead lpBytesRead lpOverlapped -- bool )
+
+1 CONSTANT HANDLE_FLAG_INHERIT
+
+CLASS SECURITY_ATTRIBUTES
+   VARIABLE nLength
+   VARIABLE lpSecurityDescriptor
+   VARIABLE bInheritHandle
+
+   : CONSTRUCT ( -- )
+      [ THIS SIZEOF ] LITERAL nLength !
+      0 lpSecurityDescriptor !
+      1 bInheritHandle ! ;
+END-CLASS
+
+SECURITY_ATTRIBUTES BUILDS SA
+SA CONSTRUCT
+
+
+VARIABLE hReadPipe
+VARIABLE hWritePipe
+
+: make-pipe ( -- )
+   CR .( Pipe: )
+   hReadPipe hWritePipe SA 0 CreatePipe .  hReadPipe ?  hWritePipe ?
+   hReadPipe @ HANDLE_FLAG_INHERIT 0 SetHandleInformation . ;
+
+
+
+\  STARTUPINFO 
+
+CLASS STARTUPINFO
+   VARIABLE cb
+   VARIABLE lpReserved
+   VARIABLE lpDesktop
+   VARIABLE lpTitle
+   VARIABLE dwX
+   VARIABLE dwY
+   VARIABLE dwXSize
+   VARIABLE dwYSize
+   VARIABLE dwXCountChars
+   VARIABLE dwYCountChars
+   VARIABLE dwFillAttribute
+   VARIABLE dwFlags
+   HVARIABLE wShowWindow
+   HVARIABLE cbReserved2
+   VARIABLE lpReserved2
+   VARIABLE hStdInput
+   VARIABLE hStdOutput
+   VARIABLE hStdError
+
+   : CONSTRUCT ( -- )
+      [ THIS SIZEOF ] LITERAL cb !
+      STARTF_USESTDHANDLES STARTF_USESHOWWINDOW OR dwFlags !
+      \ merge stdout+stderr into one pipe
+      hWritePipe @ hStdOutput !
+      hWritePipe @ hStdError  ! ;
+END-CLASS
+
+STARTUPINFO BUILDS SI
+
+CLASS PROCESS_INFORMATION
+   VARIABLE hProcess
+   VARIABLE hThread
+   VARIABLE dwProcessId
+   VARIABLE dwThreadId
+END-CLASS
+
+PROCESS_INFORMATION BUILDS PI
+
+
+
+\  Run console command and wait
+
+
+: CONSOLE-WAIT ( zcmd -- bool )
+   \ (lpAppName=0  lpCmdLine=zcmd  lpProcAttr=0 lpThreadAttr=0
+   \  bInheritHandles=1  dwCreationFlags=CREATE_NEW_CONSOLE
+   \  lpEnv=0 lpCurDir=0  lpStartupInfo=&SI lpProcInfo=&PI)
+   0 SWAP 0 0 1 CREATE_NEW_CONSOLE 0 0
+   SI ADDR PI ADDR CreateProcess DUP IF
+      PI hProcess @ INFINITE WaitForSingleObject DROP
+      PI hThread  @ CloseHandle DROP
+      PI hProcess @ CloseHandle DROP
+   THEN ;
+
+
+
+\  Drain whatever is currently available in the pipe into PAD
+
+VARIABLE CNT
+VARIABLE GOT
+
+: pipe-drain-to-pad ( -- zpad )
+   0 GOT !  0 CNT !
+   hReadPipe @ 0 0 0 CNT 0 PeekNamedPipe DROP
+   CNT @ 0= IF  PAD 0 PAD C!  PAD EXIT THEN
+   hReadPipe @ PAD CNT @ GOT 0 ReadFile DROP
+   PAD GOT @ + 0 SWAP C!
+   PAD ;
+
+
+\ Gui stuff 
+
+DIALOG Dialog_Template-TEMPLATE
+[MODAL " Dialog Template" 20 20 231 153 ]
+ [PUSHBUTTON        " OK"                         IDOK      170 14  40  12  ]
+ [PUSHBUTTON        " Cancel"                     IDCANCEL  170 34  40  14  ]
+ [EDITBOX           " >"                          100       26  62  184 76 (+STYLE WS_VSCROLL WS_VISIBLE WS_CHILD) ]
+ [DEFPUSHBUTTON     " Pipe"                       101       28  14  40  14  ]
+ [DEFPUSHBUTTON     " ffmpeg"                     102       68  14  40  14  ]
+ [DEFPUSHBUTTON     " avrdude"                    103       68  34  40  14  ]
+ [DEFPUSHBUTTON     " pinout"                     104        26  34  40  14  ]
+END-DIALOG
+
+
+[SWITCH Dialog_Template-COMMANDS DROP ( wparam -- )
+   IDOK     RUN: HWND 0 EndDialog ;
+   IDCANCEL RUN: HWND 0 EndDialog ;
+
+   101 RUN:
+      Z" cmd.exe /C echo %date% " CONSOLE-WAIT
+      HWND 100 pipe-drain-to-pad SetDlgItemText ;
+
+   102 RUN:
+      Z" cmd.exe /C ffmpeg " CONSOLE-WAIT
+      HWND 100 pipe-drain-to-pad SetDlgItemText ;
+
+   103 RUN:
+      Z" cmd.exe /C avrdude " CONSOLE-WAIT
+      HWND 100 pipe-drain-to-pad SetDlgItemText ;
+
+\ replace with your own picture path 
+   104 RUN:
+      s"  C:\STM32F411CEpinout.png" >shell ;
+
+SWITCH]
+
+
+[SWITCH Dialog_Template-MESSAGES ZERO ( msg -- res )
+   WM_COMMAND     RUN: WPARAM LOWORD Dialog_Template-COMMANDS ;
+   WM_INITDIALOG  RUN: NOOP ;
+   WM_CTLCOLOREDIT RUN: WPARAM $00FFFFFF SetTextColor WPARAM 0 SetBkColor 4 GetStockObject ;
+SWITCH]
+
+:NONAME ( -- res )  MSG LOWORD Dialog_Template-MESSAGES ;
+4 CALLBACK: Dialog_Template-CALLBACK
+
+: Dialog_Template ( hwnd -- res )
+   HINST Dialog_Template-TEMPLATE ROT Dialog_Template-CALLBACK 0 DialogBoxIndirectParam ;
+
+: GO ( -- )
+   make-pipe
+   SI CONSTRUCT
+   HWND Dialog_Template DROP ;
