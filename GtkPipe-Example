@@ -1,0 +1,103 @@
+\ Gui wrapper using popen in SwiftForth for Linux 
+\ Author: https://www.youtube.com/@code4th
+\ To run, copy and paste into the examples folder, and type in MAIN to run
+
+EMPTY
+REQUIRES gtk4
+
+GtkApplication       BUILDS APP
+GtkApplicationWindow BUILDS WINDOW
+GtkBox               BUILDS BOX
+GtkButton            BUILDS OKBTN
+GtkScrolledWindow    BUILDS SCROLL
+GtkWidget            BUILDS OUTVIEW
+
+0 VALUE OUTBUF
+
+: SCROLL-BOTTOM ( -- )
+   OUTBUF gtk_text_buffer_get_insert          \ -> GtkTextMark*
+   OUTVIEW INSTANCE SWAP gtk_text_view_scroll_mark_onscreen ;
+
+: OUT+ ( addr len -- )
+   OUTBUF -ROT gtk_text_buffer_insert_at_cursor SCROLL-BOTTOM ;
+
+\ --
+
+FUNCTION: popen  ( a b -- fp )
+FUNCTION: fgets  ( a b fp -- a|0 )
+FUNCTION: pclose ( fp -- n )
+
+0 VALUE pipefp
+
+: PIPE-OPEN ( -- )
+  Z" ls" Z" r" popen TO pipefp ;
+
+: PIPE-CLOSE ( -- )
+  pipefp ?DUP IF pclose DROP 0 TO pipefp THEN ;
+
+: PIPE-LS ( -- )
+  PAD 1024 ERASE
+  PIPE-OPEN
+  pipefp 0= IF ." popen failed" CR EXIT THEN
+
+  BEGIN
+    PAD 1024 pipefp fgets     \ -> PAD or 0
+  ?DUP WHILE
+    PAD ZCOUNT OUT+ \ prints the line (includes newline if fgets got one)
+  REPEAT
+
+  PIPE-CLOSE ;
+
+
+\ ---
+
+:NONAME ( -- )
+    PIPE-LS ; 
+\   S\" OK clicked\n" OUT+ ;
+( xt) GCALLBACK: (OK-CLICK)
+
+: LAUNCH ( -- )
+   APP INSTANCE  WINDOW NEW
+   Z" Window" WINDOW SET-TITLE
+   520 380 WINDOW SET-DEFAULT-SIZE   
+
+   GTK_ORIENTATION_VERTICAL 8 BOX NEW
+   12 BOX SET-MARGIN-START
+   12 BOX SET-MARGIN-END
+   12 BOX SET-MARGIN-TOP
+   12 BOX SET-MARGIN-BOTTOM
+   WINDOW SET-CHILD
+
+   \ --- OK button
+   (OK-CLICK) 0 Z" OK" OKBTN NEW
+   0 OKBTN SET-HEXPAND                 
+   GTK_ALIGN_START OKBTN SET-HALIGN    \ pack to left (or use CENTER) 
+   BOX APPEND
+
+   \ Scroller
+   SCROLL NEW
+   GTK_POLICY_AUTOMATIC GTK_POLICY_AUTOMATIC SCROLL SET-POLICY
+   1 SCROLL SET-HAS-FRAME
+   1 SCROLL SET-VEXPAND                \ fill remaining height
+   1 SCROLL SET-HEXPAND
+   BOX APPEND
+
+   gtk_text_view_new OUTVIEW HANDLE !
+   OUTVIEW INSTANCE SCROLL SET-CHILD
+
+   OUTVIEW INSTANCE gtk_text_view_get_buffer TO OUTBUF
+   OUTVIEW INSTANCE 0 gtk_text_view_set_editable
+   OUTVIEW INSTANCE 0 gtk_text_view_set_cursor_visible
+
+
+   S\" Ready.\nClick OK...\n" OUT+
+
+   WINDOW PRESENT ;
+
+' LAUNCH GCALLBACK: (LAUNCH)
+
+: MAIN ( -- )
+   (LAUNCH) Z" forth.okscroll" APP NEW
+   APP RUN EXITSTATUS !  APP UNREF ;
+
+MAIN
